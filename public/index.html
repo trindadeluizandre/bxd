@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XRPL DEX Telemetry Dashboard</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Segoe UI', monospace, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .header {
+            border-bottom: 2px solid #21262d;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            position: relative;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .card .title {
+            font-size: 0.78em;
+            color: #8b949e;
+        }
+        .card .value {
+            font-size: 1.25em;
+            font-weight: bold;
+            color: #58a6ff;
+        }
+        .ask { color: #f85149 !important; }
+        .bid { color: #3fb950 !important; }
+
+        .tooltip-container {
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+        }
+        .tooltip-icon {
+            font-size: 0.85em;
+            color: #8b949e;
+            border: 1px solid #30363d;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        .tooltip-container:hover .tooltip-icon {
+            color: #58a6ff;
+            border-color: #58a6ff;
+        }
+        .tooltip-box {
+            visibility: hidden;
+            width: 240px;
+            background-color: #21262d;
+            color: #c9d1d9;
+            text-align: left;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 10;
+            top: 25px;
+            right: 0;
+            opacity: 0;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            font-size: 0.78em;
+            border: 1px solid #484f58;
+            box-shadow: 0px 4px 12px rgba(0,0,0,0.5);
+            line-height: 1.4;
+        }
+        .tooltip-container:hover .tooltip-box {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .depth-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .imbalance-card, .slippage-card, .chart-card, .tape-card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .imbalance-bar-container {
+            display: flex;
+            height: 20px;
+            background-color: #21262d;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .imbalance-buy {
+            background-color: #238636;
+            height: 100%;
+            transition: width 0.4s ease;
+        }
+        .imbalance-sell {
+            background-color: #da3633;
+            height: 100%;
+            transition: width 0.4s ease;
+        }
+        .imbalance-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9em;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        .slippage-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .tape-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 0.88em;
+        }
+        .tape-table th {
+            text-align: left;
+            color: #8b949e;
+            border-bottom: 1px solid #30363d;
+            padding: 8px;
+        }
+        .tape-table td {
+            padding: 8px;
+            border-bottom: 1px solid #21262d;
+        }
+        .whale-row {
+            background-color: rgba(210, 153, 34, 0.15) !important;
+            border-left: 4px solid #d29922 !important;
+            font-weight: bold;
+        }
+        .whale-badge {
+            background-color: #d29922;
+            color: #0d1117;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            margin-left: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>XRPL DEX TELEMETRY | XRP/RLUSD</h2>
+            <div id="timestamp" style="color: #8b949e;">Aguardando conexão...</div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">BEST ASK</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Menor preço pelo qual um vendedor aceita entregar XRP no momento.</div>
+                    </div>
+                </div>
+                <div class="value ask" id="bestAsk">---</div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">BEST BID</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Maior preço pelo qual um comprador aceita pagar por XRP no momento.</div>
+                    </div>
+                </div>
+                <div class="value bid" id="bestBid">---</div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">MID-PRICE</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Preço médio de equilíbrio exato entre a melhor oferta de compra e de venda.</div>
+                    </div>
+                </div>
+                <div class="value" id="midPrice">---</div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">SPREAD</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Diferença nominal e percentual entre o Ask e o Bid. Spreads menores indicam maior liquidez.</div>
+                    </div>
+                </div>
+                <div class="value" id="spread">---</div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">CVD (SALDO AGRESSÃO)</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Saldo acumulado do dinheiro real das execuções.<br><br>• <strong>Positivo:</strong> Dominância compradora.<br>• <strong>Negativo:</strong> Dominância vendedora.</div>
+                    </div>
+                </div>
+                <div class="value" id="cvdValue">$0.00</div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">VWAP DE LEDGER</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Volume-Weighted Average Price: Preço médio ponderado pelo volume das transações validadas na sessão.</div>
+                    </div>
+                </div>
+                <div class="value" id="vwapValue" style="color: #bc8cff;">---</div>
+            </div>
+        </div>
+
+        <div class="depth-container">
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">PROFUNDIDADE DE VENDA (TOP 10 ASKS)</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Soma de todo o volume acumulado nas 10 melhores ofertas vendedoras do livro.</div>
+                    </div>
+                </div>
+                <div class="value ask" id="depthAsk">---</div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="title">PROFUNDIDADE DE COMPRA (TOP 10 BIDS)</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ⓘ</span>
+                        <div class="tooltip-box">Soma de todo o volume acumulado nas 10 melhores ofertas compradoras do livro.</div>
+                    </div>
+                </div>
+                <div class="value bid" id="depthBid">---</div>
+            </div>
+        </div>
+
+        <div class="imbalance-card">
+            <div class="card-header">
+                <span class="title">ORDERBOOK IMBALANCE (PRESSÃO DE MERCADO TOP 10)</span>
+                <div class="tooltip-container">
+                    <span class="tooltip-icon">ⓘ</span>
+                    <div class="tooltip-box">Proporção percentual da liquidez entre Bids e Asks no Top 10 do livro.</div>
+                </div>
+            </div>
+            <div class="imbalance-bar-container">
+                <div id="imbalanceBuyBar" class="imbalance-buy" style="width: 50%;"></div>
+                <div id="imbalanceSellBar" class="imbalance-sell" style="width: 50%;"></div>
+            </div>
+            <div class="imbalance-labels">
+                <span class="bid" id="imbalanceBuyLabel">COMPRADORES: 50.0%</span>
+                <span class="ask" id="imbalanceSellLabel">VENDEDORES: 50.0%</span>
+            </div>
+        </div>
+
+        <div class="slippage-card">
+            <div class="card-header">
+                <span class="title">SIMULADOR DE SLIPPAGE ESTIMADO (IMPACTO DE $1.000 RLUSD)</span>
+                <div class="tooltip-container">
+                    <span class="tooltip-icon">ⓘ</span>
+                    <div class="tooltip-box">Estima o preço médio final e a porcentagem de penalidade no preço ao executar uma ordem de $1.000 RLUSD a mercado.</div>
+                </div>
+            </div>
+            <div class="slippage-grid">
+                <div>
+                    <span style="font-size: 0.8em; color: #8b949e;">COMPRA A MERCADO ($1.000 RLUSD):</span>
+                    <div id="slippageBuyValue" style="font-weight: bold; margin-top: 3px;">---</div>
+                </div>
+                <div>
+                    <span style="font-size: 0.8em; color: #8b949e;">VENDA A MERCADO ($1.000 RLUSD):</span>
+                    <div id="slippageSellValue" style="font-weight: bold; margin-top: 3px;">---</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Módulo Limpo de Gráfico de Linha (Chart.js) -->
+        <div class="chart-card">
+            <div class="card-header" style="margin-bottom: 15px; border-bottom: 1px solid #21262d; padding-bottom: 10px;">
+                <span class="title">GRÁFICO DE TELEMETRIA EM TEMPO REAL (MID-PRICE, EMA 9, VWAP)</span>
+                <div class="tooltip-container">
+                    <span class="tooltip-icon">ⓘ</span>
+                    <div class="tooltip-box">
+                        • <strong>Linha Azul:</strong> Mid-Price instantâneo.<br>
+                        • <strong>Linha Dourada:</strong> EMA 9 (Média Móvel Exponencial).<br>
+                        • <strong>Linha Roxa:</strong> VWAP da sessão.
+                    </div>
+                </div>
+            </div>
+            <div style="width: 100%; height: 350px;">
+                <canvas id="priceChart"></canvas>
+            </div>
+        </div>
+
+        <div class="tape-card">
+            <div class="card-header">
+                <span class="title">TAPE READER & WHALE TRACKER (NEGÓCIOS EM TEMPO REAL)</span>
+                <div class="tooltip-container">
+                    <span class="tooltip-icon">ⓘ</span>
+                    <div class="tooltip-box">Lista das transações reais executadas. Linhas douradas indicam grandes ordens (Whales) acima de $1.500 RLUSD.</div>
+                </div>
+            </div>
+            <table class="tape-table">
+                <thead>
+                    <tr>
+                        <th>HORÁRIO</th>
+                        <th>TIPO</th>
+                        <th>PREÇO (RLUSD)</th>
+                        <th>VOLUME (XRP)</th>
+                        <th>TOTAL (RLUSD)</th>
+                    </tr>
+                </thead>
+                <tbody id="tapeBody">
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: #8b949e;">Aguardando execuções no ledger...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        function emitirBeepWhale() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+            } catch (e) {
+                console.log('Permissão de áudio pendente.');
+            }
+        }
+
+        // GRÁFICO CHART.JS
+        const ctx = document.getElementById('priceChart').getContext('2d');
+        const maxDataPoints = 30;
+
+        const priceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Mid-Price (RLUSD)',
+                        data: [],
+                        borderColor: '#58a6ff',
+                        backgroundColor: 'rgba(88, 166, 255, 0.05)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 2
+                    },
+                    {
+                        label: 'EMA 9 (Ledgers)',
+                        data: [],
+                        borderColor: '#d29922',
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderDash: [4, 4],
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 1
+                    },
+                    {
+                        label: 'VWAP de Ledger',
+                        data: [],
+                        borderColor: '#bc8cff',
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+                    y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+                },
+                plugins: {
+                    legend: { labels: { color: '#c9d1d9' } }
+                }
+            }
+        });
+
+        let lastEMA9 = null;
+        const periodEMA = 9;
+        const kFactor = 2 / (periodEMA + 1);
+
+        function calcularEMA9(novoPreco) {
+            if (lastEMA9 === null) {
+                lastEMA9 = novoPreco;
+            } else {
+                lastEMA9 = (novoPreco * kFactor) + (lastEMA9 * (1 - kFactor));
+            }
+            return lastEMA9;
+        }
+
+        function atualizarCardCVD(valorCVD) {
+            const cvdElement = document.getElementById('cvdValue');
+            if (valorCVD === undefined || valorCVD === null) return;
+
+            const prefixo = valorCVD >= 0 ? '+$' : '-$';
+            const valorAbsoluto = Math.abs(valorCVD).toFixed(2);
+            cvdElement.innerText = prefixo + valorAbsoluto;
+
+            if (valorCVD > 0) {
+                cvdElement.className = 'value bid';
+            } else if (valorCVD < 0) {
+                cvdElement.className = 'value ask';
+            } else {
+                cvdElement.className = 'value';
+            }
+        }
+
+        socket.on('xrpl_telemetry', (data) => {
+            try {
+                document.getElementById('timestamp').innerText = 'Atualizado em: ' + data.timestamp;
+                document.getElementById('bestAsk').innerText = '$' + data.bestAsk.toFixed(4);
+                document.getElementById('bestBid').innerText = '$' + data.bestBid.toFixed(4);
+                document.getElementById('midPrice').innerText = '$' + data.midPrice.toFixed(4);
+                document.getElementById('spread').innerText = '$' + data.spreadNominal.toFixed(4) + ' (' + data.spreadPercentual.toFixed(2) + '%)';
+                document.getElementById('depthAsk').innerText = data.profundidadeAskXRP.toFixed(2) + ' XRP (~$' + data.profundidadeAskRLUSD.toFixed(2) + ')';
+                document.getElementById('depthBid').innerText = data.profundidadeBidXRP.toFixed(2) + ' XRP (~$' + data.profundidadeBidRLUSD.toFixed(2) + ')';
+
+                document.getElementById('imbalanceBuyBar').style.width = data.imbalanceBuyPercent.toFixed(1) + '%';
+                document.getElementById('imbalanceSellBar').style.width = data.imbalanceSellPercent.toFixed(1) + '%';
+                document.getElementById('imbalanceBuyLabel').innerText = 'COMPRADORES: ' + data.imbalanceBuyPercent.toFixed(1) + '%';
+                document.getElementById('imbalanceSellLabel').innerText = 'VENDEDORES: ' + data.imbalanceSellPercent.toFixed(1) + '%';
+
+                const buySlip = data.slippageCompra;
+                const sellSlip = data.slippageVenda;
+
+                if (buySlip.semLiquidezSuficiente) {
+                    document.getElementById('slippageBuyValue').innerText = 'Liquidez insuficiente no Top 15';
+                    document.getElementById('slippageBuyValue').className = 'ask';
+                } else {
+                    document.getElementById('slippageBuyValue').innerText = '$' + buySlip.precoMedio.toFixed(4) + ' (Slippage: +' + buySlip.slippagePercent.toFixed(2) + '%)';
+                    document.getElementById('slippageBuyValue').className = buySlip.slippagePercent > 0.3 ? 'ask' : 'bid';
+                }
+
+                if (sellSlip.semLiquidezSuficiente) {
+                    document.getElementById('slippageSellValue').innerText = 'Liquidez insuficiente no Top 15';
+                    document.getElementById('slippageSellValue').className = 'ask';
+                } else {
+                    document.getElementById('slippageSellValue').innerText = '$' + sellSlip.precoMedio.toFixed(4) + ' (Slippage: -' + sellSlip.slippagePercent.toFixed(2) + '%)';
+                    document.getElementById('slippageSellValue').className = sellSlip.slippagePercent > 0.3 ? 'ask' : 'bid';
+                }
+
+                atualizarCardCVD(data.cvdRLUSD);
+
+                if (data.vwap && data.vwap > 0) {
+                    document.getElementById('vwapValue').innerText = '$' + data.vwap.toFixed(4);
+                } else {
+                    document.getElementById('vwapValue').innerText = 'Aguardando trades...';
+                }
+
+                // Atualização do Chart.js
+                const emaVal = calcularEMA9(data.midPrice);
+                priceChart.data.labels.push(data.timestamp);
+                priceChart.data.datasets[0].data.push(data.midPrice);
+                priceChart.data.datasets[1].data.push(emaVal);
+                priceChart.data.datasets[2].data.push(data.vwap > 0 ? data.vwap : null);
+
+                if (priceChart.data.labels.length > maxDataPoints) {
+                    priceChart.data.labels.shift();
+                    priceChart.data.datasets[0].data.shift();
+                    priceChart.data.datasets[1].data.shift();
+                    priceChart.data.datasets[2].data.shift();
+                }
+                priceChart.update();
+            } catch (err) {
+                console.error("[ERRO RENDER CLIENTE]", err);
+            }
+        });
+
+        const tapeBody = document.getElementById('tapeBody');
+        const maxTapeEntries = 10;
+        let isFirstTrade = true;
+
+        socket.on('xrpl_trade', (trade) => {
+            try {
+                if (isFirstTrade) {
+                    tapeBody.innerHTML = '';
+                    isFirstTrade = false;
+                }
+
+                const row = document.createElement('tr');
+                if (trade.isWhale) {
+                    row.classList.add('whale-row');
+                    emitirBeepWhale();
+                }
+
+                const sideClass = trade.side === 'BUY' ? 'bid' : 'ask';
+                const sideText = trade.side === 'BUY' ? 'COMPRA' : 'VENDA';
+                const whaleBadge = trade.isWhale ? '<span class="whale-badge">WHALE</span>' : '';
+
+                row.innerHTML = `
+                    <td>${trade.timestamp}</td>
+                    <td class="${sideClass}" style="font-weight: bold;">${sideText}${whaleBadge}</td>
+                    <td>$${trade.price.toFixed(4)}</td>
+                    <td>${trade.amountXRP.toFixed(2)} XRP</td>
+                    <td>$${trade.amountRLUSD.toFixed(2)}</td>
+                `;
+
+                tapeBody.insertBefore(row, tapeBody.firstChild);
+
+                if (tapeBody.children.length > maxTapeEntries) {
+                    tapeBody.removeChild(tapeBody.lastChild);
+                }
+
+                atualizarCardCVD(trade.cvdRLUSD);
+                if (trade.vwap && trade.vwap > 0) {
+                    document.getElementById('vwapValue').innerText = '$' + trade.vwap.toFixed(4);
+                }
+            } catch (err) {
+                console.error("[ERRO RENDER TRADE]", err);
+            }
+        });
+    </script>
+</body>
+</html>
