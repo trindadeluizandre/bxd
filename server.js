@@ -1,4 +1,3 @@
-cat << 'EOF' > server.js
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -344,4 +343,3 @@ async function iniciarServidor() {
 }
 
 iniciarServidor();
-EOF
