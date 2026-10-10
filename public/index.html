@@ -1,102 +1,156 @@
+cat << 'EOF' > public/index.html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XRPL DEX Telemetry Dashboard</title>
+    <title>XRPL DEX Telemetry | Glassmorphism Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body {
-            background-color: #0d1117;
-            color: #c9d1d9;
-            font-family: 'Segoe UI', monospace, sans-serif;
-            margin: 0;
-            padding: 20px;
+        :root {
+            --bg-dark: #070a11;
+            --glass-bg: rgba(18, 23, 34, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --accent-ask: #ff4d6d;
+            --accent-bid: #00e676;
+            --accent-mid: #00b4d8;
+            --accent-vwap: #bc8cff;
+            --accent-whale: #ffd166;
         }
+
+        body {
+            background-color: var(--bg-dark);
+            background-image: radial-gradient(circle at 50% 0%, rgba(0, 180, 216, 0.08) 0%, transparent 60%);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 24px;
+            min-height: 100vh;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
         .container {
-            max-width: 1000px;
+            max-width: 1100px;
             margin: 0 auto;
         }
+
         .header {
-            border-bottom: 2px solid #21262d;
-            padding-bottom: 10px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 16px 24px;
             margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            box-shadow: var(--glass-shadow);
         }
+
+        .header h2 {
+            margin: 0;
+            font-size: 1.2em;
+            letter-spacing: 1px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 16px;
             margin-bottom: 20px;
         }
+
         .card {
-            background-color: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 15px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: var(--glass-shadow);
             position: relative;
+            transition: transform 0.2s ease, border-color 0.2s ease;
         }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.18);
+            transform: translateY(-2px);
+        }
+
         .card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
         }
-        .card .title {
-            font-size: 0.78em;
-            color: #8b949e;
+
+        .title {
+            font-size: 0.72em;
+            color: var(--text-secondary);
+            font-weight: 600;
+            letter-spacing: 0.5px;
         }
-        .card .value {
-            font-size: 1.25em;
-            font-weight: bold;
-            color: #58a6ff;
+
+        .value {
+            font-size: 1.2em;
+            font-weight: 700;
+            color: var(--accent-mid);
         }
-        .ask { color: #f85149 !important; }
-        .bid { color: #3fb950 !important; }
+
+        .ask { color: var(--accent-ask) !important; text-shadow: 0 0 10px rgba(255, 77, 109, 0.2); }
+        .bid { color: var(--accent-bid) !important; text-shadow: 0 0 10px rgba(0, 230, 118, 0.2); }
 
         .tooltip-container {
             position: relative;
             display: inline-block;
             cursor: pointer;
         }
+
         .tooltip-icon {
-            font-size: 0.85em;
-            color: #8b949e;
-            border: 1px solid #30363d;
+            font-size: 0.75em;
+            color: var(--text-secondary);
+            border: 1px solid var(--glass-border);
             border-radius: 50%;
             width: 16px;
             height: 16px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: bold;
         }
-        .tooltip-container:hover .tooltip-icon {
-            color: #58a6ff;
-            border-color: #58a6ff;
-        }
+
         .tooltip-box {
             visibility: hidden;
-            width: 240px;
-            background-color: #21262d;
-            color: #c9d1d9;
-            text-align: left;
-            border-radius: 6px;
-            padding: 10px;
+            width: 220px;
+            background: rgba(15, 20, 30, 0.95);
+            backdrop-filter: blur(12px);
+            color: var(--text-primary);
+            border-radius: 8px;
+            padding: 10px 12px;
             position: absolute;
-            z-index: 10;
+            z-index: 20;
             top: 25px;
             right: 0;
             opacity: 0;
             transition: opacity 0.2s ease, visibility 0.2s ease;
-            font-size: 0.78em;
-            border: 1px solid #484f58;
-            box-shadow: 0px 4px 12px rgba(0,0,0,0.5);
+            font-size: 0.75em;
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.6);
             line-height: 1.4;
         }
+
         .tooltip-container:hover .tooltip-box {
             visibility: visible;
             opacity: 1;
@@ -105,84 +159,99 @@
         .depth-container {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 15px;
+            gap: 16px;
             margin-bottom: 20px;
         }
+
         .imbalance-card, .slippage-card, .chart-card, .tape-card {
-            background-color: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 15px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 20px;
             margin-bottom: 20px;
+            box-shadow: var(--glass-shadow);
         }
+
         .imbalance-bar-container {
             display: flex;
-            height: 20px;
-            background-color: #21262d;
-            border-radius: 4px;
+            height: 16px;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
             overflow: hidden;
-            margin-top: 10px;
+            margin-top: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
+
         .imbalance-buy {
-            background-color: #238636;
+            background: linear-gradient(90deg, #00b0ff, #00e676);
             height: 100%;
             transition: width 0.4s ease;
         }
+
         .imbalance-sell {
-            background-color: #da3633;
+            background: linear-gradient(90deg, #ff4d6d, #ff758f);
             height: 100%;
             transition: width 0.4s ease;
         }
+
         .imbalance-labels {
             display: flex;
             justify-content: space-between;
-            font-size: 0.9em;
-            font-weight: bold;
-            margin-top: 5px;
+            font-size: 0.82em;
+            font-weight: 600;
+            margin-top: 8px;
         }
+
         .slippage-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-top: 10px;
+            gap: 16px;
+            margin-top: 12px;
         }
 
         .tape-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 10px;
-            font-size: 0.88em;
+            margin-top: 12px;
+            font-size: 0.85em;
         }
+
         .tape-table th {
             text-align: left;
-            color: #8b949e;
-            border-bottom: 1px solid #30363d;
-            padding: 8px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--glass-border);
+            padding: 10px 8px;
+            font-weight: 600;
         }
+
         .tape-table td {
-            padding: 8px;
-            border-bottom: 1px solid #21262d;
+            padding: 10px 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
         }
+
         .whale-row {
-            background-color: rgba(210, 153, 34, 0.15) !important;
-            border-left: 4px solid #d29922 !important;
-            font-weight: bold;
+            background: rgba(255, 209, 102, 0.08) !important;
+            border-left: 3px solid var(--accent-whale) !important;
         }
+
         .whale-badge {
-            background-color: #d29922;
-            color: #0d1117;
+            background-color: var(--accent-whale);
+            color: #000;
             padding: 2px 6px;
             border-radius: 4px;
-            font-size: 0.75em;
-            margin-left: 5px;
+            font-size: 0.72em;
+            margin-left: 6px;
+            font-weight: 700;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h2>XRPL DEX TELEMETRY | XRP/RLUSD</h2>
-            <div id="timestamp" style="color: #8b949e;">Aguardando conexão...</div>
+            <h2>XRPL DEX TELEMETRY <span style="color: var(--text-secondary); font-weight: 400;">| XRP/RLUSD</span></h2>
+            <div id="timestamp" class="mono" style="color: var(--text-secondary); font-size: 0.85em;">Aguardando conexão...</div>
         </div>
 
         <div class="grid">
@@ -190,66 +259,66 @@
                 <div class="card-header">
                     <span class="title">BEST ASK</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
+                        <span class="tooltip-icon">i</span>
                         <div class="tooltip-box">Menor preço pelo qual um vendedor aceita entregar XRP no momento.</div>
                     </div>
                 </div>
-                <div class="value ask" id="bestAsk">---</div>
+                <div class="value ask mono" id="bestAsk">---</div>
             </div>
 
             <div class="card">
                 <div class="card-header">
                     <span class="title">BEST BID</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
+                        <span class="tooltip-icon">i</span>
                         <div class="tooltip-box">Maior preço pelo qual um comprador aceita pagar por XRP no momento.</div>
                     </div>
                 </div>
-                <div class="value bid" id="bestBid">---</div>
+                <div class="value bid mono" id="bestBid">---</div>
             </div>
 
             <div class="card">
                 <div class="card-header">
                     <span class="title">MID-PRICE</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
+                        <span class="tooltip-icon">i</span>
                         <div class="tooltip-box">Preço médio de equilíbrio exato entre a melhor oferta de compra e de venda.</div>
                     </div>
                 </div>
-                <div class="value" id="midPrice">---</div>
+                <div class="value mono" id="midPrice">---</div>
             </div>
 
             <div class="card">
                 <div class="card-header">
                     <span class="title">SPREAD</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
+                        <span class="tooltip-icon">i</span>
                         <div class="tooltip-box">Diferença nominal e percentual entre o Ask e o Bid. Spreads menores indicam maior liquidez.</div>
                     </div>
                 </div>
-                <div class="value" id="spread">---</div>
+                <div class="value mono" id="spread">---</div>
             </div>
 
             <div class="card">
                 <div class="card-header">
                     <span class="title">CVD (SALDO AGRESSÃO)</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
-                        <div class="tooltip-box">Saldo acumulado do dinheiro real das execuções.<br><br>• <strong>Positivo:</strong> Dominância compradora.<br>• <strong>Negativo:</strong> Dominância vendedora.</div>
+                        <span class="tooltip-icon">i</span>
+                        <div class="tooltip-box">Saldo acumulado de dinheiro real das execuções.<br><br>• <strong>Positivo:</strong> Dominância compradora.<br>• <strong>Negativo:</strong> Dominância vendedora.</div>
                     </div>
                 </div>
-                <div class="value" id="cvdValue">$0.00</div>
+                <div class="value mono" id="cvdValue">$0.00</div>
             </div>
 
             <div class="card">
                 <div class="card-header">
                     <span class="title">VWAP DE LEDGER</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
-                        <div class="tooltip-box">Volume-Weighted Average Price: Preço médio ponderado pelo volume das transações validadas na sessão.</div>
+                        <span class="tooltip-icon">i</span>
+                        <div class="tooltip-box">Volume-Weighted Average Price: Preço médio ponderado pelo volume das transações validadas.</div>
                     </div>
                 </div>
-                <div class="value" id="vwapValue" style="color: #bc8cff;">---</div>
+                <div class="value mono" id="vwapValue" style="color: var(--accent-vwap);">---</div>
             </div>
         </div>
 
@@ -258,21 +327,21 @@
                 <div class="card-header">
                     <span class="title">PROFUNDIDADE DE VENDA (TOP 10 ASKS)</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
+                        <span class="tooltip-icon">i</span>
                         <div class="tooltip-box">Soma de todo o volume acumulado nas 10 melhores ofertas vendedoras do livro.</div>
                     </div>
                 </div>
-                <div class="value ask" id="depthAsk">---</div>
+                <div class="value ask mono" id="depthAsk">---</div>
             </div>
             <div class="card">
                 <div class="card-header">
                     <span class="title">PROFUNDIDADE DE COMPRA (TOP 10 BIDS)</span>
                     <div class="tooltip-container">
-                        <span class="tooltip-icon">ⓘ</span>
+                        <span class="tooltip-icon">i</span>
                         <div class="tooltip-box">Soma de todo o volume acumulado nas 10 melhores ofertas compradoras do livro.</div>
                     </div>
                 </div>
-                <div class="value bid" id="depthBid">---</div>
+                <div class="value bid mono" id="depthBid">---</div>
             </div>
         </div>
 
@@ -280,7 +349,7 @@
             <div class="card-header">
                 <span class="title">ORDERBOOK IMBALANCE (PRESSÃO DE MERCADO TOP 10)</span>
                 <div class="tooltip-container">
-                    <span class="tooltip-icon">ⓘ</span>
+                    <span class="tooltip-icon">i</span>
                     <div class="tooltip-box">Proporção percentual da liquidez entre Bids e Asks no Top 10 do livro.</div>
                 </div>
             </div>
@@ -288,7 +357,7 @@
                 <div id="imbalanceBuyBar" class="imbalance-buy" style="width: 50%;"></div>
                 <div id="imbalanceSellBar" class="imbalance-sell" style="width: 50%;"></div>
             </div>
-            <div class="imbalance-labels">
+            <div class="imbalance-labels mono">
                 <span class="bid" id="imbalanceBuyLabel">COMPRADORES: 50.0%</span>
                 <span class="ask" id="imbalanceSellLabel">VENDEDORES: 50.0%</span>
             </div>
@@ -298,28 +367,27 @@
             <div class="card-header">
                 <span class="title">SIMULADOR DE SLIPPAGE ESTIMADO (IMPACTO DE $1.000 RLUSD)</span>
                 <div class="tooltip-container">
-                    <span class="tooltip-icon">ⓘ</span>
+                    <span class="tooltip-icon">i</span>
                     <div class="tooltip-box">Estima o preço médio final e a porcentagem de penalidade no preço ao executar uma ordem de $1.000 RLUSD a mercado.</div>
                 </div>
             </div>
-            <div class="slippage-grid">
+            <div class="slippage-grid mono">
                 <div>
-                    <span style="font-size: 0.8em; color: #8b949e;">COMPRA A MERCADO ($1.000 RLUSD):</span>
-                    <div id="slippageBuyValue" style="font-weight: bold; margin-top: 3px;">---</div>
+                    <span style="font-size: 0.78em; color: var(--text-secondary);">COMPRA A MERCADO ($1.000 RLUSD):</span>
+                    <div id="slippageBuyValue" style="font-weight: 700; margin-top: 4px;">---</div>
                 </div>
                 <div>
-                    <span style="font-size: 0.8em; color: #8b949e;">VENDA A MERCADO ($1.000 RLUSD):</span>
-                    <div id="slippageSellValue" style="font-weight: bold; margin-top: 3px;">---</div>
+                    <span style="font-size: 0.78em; color: var(--text-secondary);">VENDA A MERCADO ($1.000 RLUSD):</span>
+                    <div id="slippageSellValue" style="font-weight: 700; margin-top: 4px;">---</div>
                 </div>
             </div>
         </div>
 
-        <!-- Módulo Limpo de Gráfico de Linha (Chart.js) -->
         <div class="chart-card">
-            <div class="card-header" style="margin-bottom: 15px; border-bottom: 1px solid #21262d; padding-bottom: 10px;">
+            <div class="card-header" style="margin-bottom: 16px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px;">
                 <span class="title">GRÁFICO DE TELEMETRIA EM TEMPO REAL (MID-PRICE, EMA 9, VWAP)</span>
                 <div class="tooltip-container">
-                    <span class="tooltip-icon">ⓘ</span>
+                    <span class="tooltip-icon">i</span>
                     <div class="tooltip-box">
                         • <strong>Linha Azul:</strong> Mid-Price instantâneo.<br>
                         • <strong>Linha Dourada:</strong> EMA 9 (Média Móvel Exponencial).<br>
@@ -336,11 +404,11 @@
             <div class="card-header">
                 <span class="title">TAPE READER & WHALE TRACKER (NEGÓCIOS EM TEMPO REAL)</span>
                 <div class="tooltip-container">
-                    <span class="tooltip-icon">ⓘ</span>
-                    <div class="tooltip-box">Lista das transações reais executadas. Linhas douradas indicam grandes ordens (Whales) acima de $1.500 RLUSD.</div>
+                    <span class="tooltip-icon">i</span>
+                    <div class="tooltip-box">Lista das transações reais executadas. Linhas destacadas indicam grandes ordens (Whales) acima de $1.500 RLUSD.</div>
                 </div>
             </div>
-            <table class="tape-table">
+            <table class="tape-table mono">
                 <thead>
                     <tr>
                         <th>HORÁRIO</th>
@@ -352,7 +420,7 @@
                 </thead>
                 <tbody id="tapeBody">
                     <tr>
-                        <td colspan="5" style="text-align: center; color: #8b949e;">Aguardando execuções no ledger...</td>
+                        <td colspan="5" style="text-align: center; color: var(--text-secondary);">Aguardando execuções no ledger...</td>
                     </tr>
                 </tbody>
             </table>
@@ -370,7 +438,7 @@
 
                 osc.type = 'sine';
                 osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
 
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
@@ -382,9 +450,12 @@
             }
         }
 
-        // GRÁFICO CHART.JS
         const ctx = document.getElementById('priceChart').getContext('2d');
         const maxDataPoints = 30;
+
+        const chartGradient = ctx.createLinearGradient(0, 0, 0, 350);
+        chartGradient.addColorStop(0, 'rgba(0, 180, 216, 0.2)');
+        chartGradient.addColorStop(1, 'rgba(0, 180, 216, 0.0)');
 
         const priceChart = new Chart(ctx, {
             type: 'line',
@@ -394,8 +465,8 @@
                     {
                         label: 'Mid-Price (RLUSD)',
                         data: [],
-                        borderColor: '#58a6ff',
-                        backgroundColor: 'rgba(88, 166, 255, 0.05)',
+                        borderColor: '#00b4d8',
+                        backgroundColor: chartGradient,
                         borderWidth: 2,
                         fill: true,
                         tension: 0.3,
@@ -404,7 +475,7 @@
                     {
                         label: 'EMA 9 (Ledgers)',
                         data: [],
-                        borderColor: '#d29922',
+                        borderColor: '#ffd166',
                         backgroundColor: 'transparent',
                         borderWidth: 2,
                         borderDash: [4, 4],
@@ -428,11 +499,11 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
-                    y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+                    x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#8b949e', font: { family: 'JetBrains Mono' } } },
+                    y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#8b949e', font: { family: 'JetBrains Mono' } } }
                 },
                 plugins: {
-                    legend: { labels: { color: '#c9d1d9' } }
+                    legend: { labels: { color: '#f0f6fc', font: { family: 'Inter' } } }
                 }
             }
         });
@@ -459,13 +530,52 @@
             cvdElement.innerText = prefixo + valorAbsoluto;
 
             if (valorCVD > 0) {
-                cvdElement.className = 'value bid';
+                cvdElement.className = 'value mono bid';
             } else if (valorCVD < 0) {
-                cvdElement.className = 'value ask';
+                cvdElement.className = 'value mono ask';
             } else {
-                cvdElement.className = 'value';
+                cvdElement.className = 'value mono';
             }
         }
+
+        function renderizarLinhaTrade(trade) {
+            const row = document.createElement('tr');
+            if (trade.isWhale) {
+                row.classList.add('whale-row');
+            }
+
+            const sideClass = trade.side === 'BUY' ? 'bid' : 'ask';
+            const sideText = trade.side === 'BUY' ? 'COMPRA' : 'VENDA';
+            const whaleBadge = trade.isWhale ? '<span class="whale-badge">WHALE</span>' : '';
+
+            row.innerHTML = `
+                <td>${trade.timestamp}</td>
+                <td class="${sideClass}" style="font-weight: 700;">${sideText}${whaleBadge}</td>
+                <td>$${trade.price.toFixed(4)}</td>
+                <td>${trade.amountXRP.toFixed(2)} XRP</td>
+                <td>$${trade.amountRLUSD.toFixed(2)}</td>
+            `;
+            return row;
+        }
+
+        const tapeBody = document.getElementById('tapeBody');
+        const maxTapeEntries = 15;
+
+        socket.on('xrpl_trade_history', (history) => {
+            if (!history || history.length === 0) return;
+            tapeBody.innerHTML = '';
+            history.forEach(trade => {
+                const row = renderizarLinhaTrade(trade);
+                tapeBody.appendChild(row);
+            });
+            const lastTrade = history[0];
+            if (lastTrade) {
+                atualizarCardCVD(lastTrade.cvdRLUSD);
+                if (lastTrade.vwap && lastTrade.vwap > 0) {
+                    document.getElementById('vwapValue').innerText = '$' + lastTrade.vwap.toFixed(4);
+                }
+            }
+        });
 
         socket.on('xrpl_telemetry', (data) => {
             try {
@@ -505,11 +615,8 @@
 
                 if (data.vwap && data.vwap > 0) {
                     document.getElementById('vwapValue').innerText = '$' + data.vwap.toFixed(4);
-                } else {
-                    document.getElementById('vwapValue').innerText = 'Aguardando trades...';
                 }
 
-                // Atualização do Chart.js
                 const emaVal = calcularEMA9(data.midPrice);
                 priceChart.data.labels.push(data.timestamp);
                 priceChart.data.datasets[0].data.push(data.midPrice);
@@ -528,34 +635,16 @@
             }
         });
 
-        const tapeBody = document.getElementById('tapeBody');
-        const maxTapeEntries = 10;
-        let isFirstTrade = true;
-
         socket.on('xrpl_trade', (trade) => {
             try {
-                if (isFirstTrade) {
+                if (tapeBody.children.length === 1 && tapeBody.children[0].children.length === 1) {
                     tapeBody.innerHTML = '';
-                    isFirstTrade = false;
                 }
 
-                const row = document.createElement('tr');
+                const row = renderizarLinhaTrade(trade);
                 if (trade.isWhale) {
-                    row.classList.add('whale-row');
                     emitirBeepWhale();
                 }
-
-                const sideClass = trade.side === 'BUY' ? 'bid' : 'ask';
-                const sideText = trade.side === 'BUY' ? 'COMPRA' : 'VENDA';
-                const whaleBadge = trade.isWhale ? '<span class="whale-badge">WHALE</span>' : '';
-
-                row.innerHTML = `
-                    <td>${trade.timestamp}</td>
-                    <td class="${sideClass}" style="font-weight: bold;">${sideText}${whaleBadge}</td>
-                    <td>$${trade.price.toFixed(4)}</td>
-                    <td>${trade.amountXRP.toFixed(2)} XRP</td>
-                    <td>$${trade.amountRLUSD.toFixed(2)}</td>
-                `;
 
                 tapeBody.insertBefore(row, tapeBody.firstChild);
 
@@ -574,3 +663,4 @@
     </script>
 </body>
 </html>
+EOF

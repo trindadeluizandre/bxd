@@ -1,3 +1,4 @@
+cat << 'EOF' > server.js
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -8,7 +9,7 @@ const XRPLEngine = require('./engine');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { cors: { origin: "*" } });
 
 const engine = new XRPLEngine();
 
@@ -17,6 +18,7 @@ let cvdRLUSD = 0;
 let totalVolumeRLUSDAcumulado = 0;
 let totalVolumeXRPAcumulado = 0;
 let vwapAtual = 0;
+let tradeHistory = [];
 
 app.use(express.static('public'));
 
@@ -57,6 +59,142 @@ function calcularSlippage(offers, targetRLUSD, bestPrice, isBuy) {
         : ((bestPrice - precoMedio) / bestPrice) * 100;
 
     return { precoMedio, slippagePercent, semLiquidezSuficiente: false };
+}
+
+function processarTradeMeta(tx) {
+    try {
+        const meta = tx.meta || tx.metaData;
+        if (!meta || meta.TransactionResult !== "tesSUCCESS") return null;
+
+        const transactionData = tx.transaction || tx;
+        if (transactionData.TransactionType !== "OfferCreate") return null;
+
+        let side = null;
+        let amountXRP = 0;
+        let amountRLUSD = 0;
+
+        if (typeof transactionData.TakerGets === 'string' && typeof transactionData.TakerPays === 'object') {
+            if (transactionData.TakerPays.currency === config.CURRENCY_RLUSD) {
+                side = 'SELL';
+            }
+        } else if (typeof transactionData.TakerPays === 'string' && typeof transactionData.TakerGets === 'object') {
+            if (transactionData.TakerGets.currency === config.CURRENCY_RLUSD) {
+                side = 'BUY';
+            }
+        }
+
+        if (!side) return null;
+
+        const affectedNodes = meta.AffectedNodes || [];
+        for (const node of affectedNodes) {
+            const nodeData = node.ModifiedNode || node.DeletedNode;
+            if (nodeData && nodeData.LedgerEntryType === "Offer") {
+                const previousFields = nodeData.PreviousFields;
+                const finalFields = nodeData.FinalFields;
+
+                if (previousFields && finalFields) {
+                    let prevXRP = 0, finalXRP = 0;
+                    let prevRLUSD = 0, finalRLUSD = 0;
+
+                    if (typeof previousFields.TakerGets === 'string' && typeof previousFields.TakerPays === 'object') {
+                        prevXRP = parseFloat(xrpl.dropsToXrp(previousFields.TakerGets));
+                        finalXRP = finalFields.TakerGets ? parseFloat(xrpl.dropsToXrp(finalFields.TakerGets)) : 0;
+                        prevRLUSD = parseFloat(previousFields.TakerPays.value);
+                        finalRLUSD = finalFields.TakerPays ? parseFloat(finalFields.TakerPays.value) : 0;
+                    } else if (typeof previousFields.TakerPays === 'string' && typeof previousFields.TakerGets === 'object') {
+                        prevXRP = parseFloat(xrpl.dropsToXrp(previousFields.TakerPays));
+                        finalXRP = finalFields.TakerPays ? parseFloat(finalFields.TakerPays.value) : 0;
+                        prevRLUSD = parseFloat(previousFields.TakerGets.value);
+                        finalRLUSD = finalFields.TakerGets ? parseFloat(finalFields.TakerGets.value) : 0;
+                    }
+
+                    const execXRP = Math.abs(prevXRP - finalXRP);
+                    const execRLUSD = Math.abs(prevRLUSD - finalRLUSD);
+
+                    if (execXRP > 0 && execRLUSD > 0) {
+                        amountXRP += execXRP;
+                        amountRLUSD += execRLUSD;
+                    }
+                }
+            }
+        }
+
+        if (amountXRP === 0 && amountRLUSD === 0) {
+            if (side === 'SELL') {
+                amountXRP = parseFloat(xrpl.dropsToXrp(transactionData.TakerGets));
+                amountRLUSD = parseFloat(transactionData.TakerPays.value);
+            } else {
+                amountXRP = parseFloat(xrpl.dropsToXrp(transactionData.TakerPays));
+                amountRLUSD = parseFloat(transactionData.TakerGets.value);
+            }
+        }
+
+        if (amountXRP > 0 && amountRLUSD > 0) {
+            const price = amountRLUSD / amountXRP;
+            const isWhale = amountRLUSD >= WHALE_THRESHOLD_RLUSD;
+
+            if (side === 'BUY') {
+                cvdRLUSD += amountRLUSD;
+            } else {
+                cvdRLUSD -= amountRLUSD;
+            }
+
+            totalVolumeRLUSDAcumulado += amountRLUSD;
+            totalVolumeXRPAcumulado += amountXRP;
+            if (totalVolumeXRPAcumulado > 0) {
+                vwapAtual = totalVolumeRLUSDAcumulado / totalVolumeXRPAcumulado;
+            }
+
+            const timestamp = transactionData.date 
+                ? new Date((transactionData.date + 946684800) * 1000).toLocaleTimeString('pt-BR')
+                : new Date().toLocaleTimeString('pt-BR');
+
+            return {
+                timestamp,
+                side,
+                price,
+                amountXRP,
+                amountRLUSD,
+                isWhale,
+                cvdRLUSD,
+                vwap: vwapAtual,
+                hash: transactionData.hash || tx.hash
+            };
+        }
+    } catch (e) {
+        console.error("[ERRO PARSING TRADE]", e.message);
+    }
+    return null;
+}
+
+async function carregarHistoricoExecucoes() {
+    console.log("[INICIALIZANDO] Carregando histórico de transações da XRPL...");
+    try {
+        const response = await engine.client.request({
+            command: "account_tx",
+            account: config.RLUSD_ISSUER,
+            limit: 60
+        });
+
+        const transactions = response.result.transactions || [];
+        console.log(`[HISTÓRICO] ${transactions.length} transações recuperadas do emissor RLUSD.`);
+
+        const sortedTx = transactions.reverse();
+
+        for (const txData of sortedTx) {
+            const trade = processarTradeMeta(txData);
+            if (trade) {
+                tradeHistory.unshift(trade);
+                if (tradeHistory.length > 15) {
+                    tradeHistory.pop();
+                }
+            }
+        }
+
+        console.log(`[HISTÓRICO CONCLUÍDO] ${tradeHistory.length} trades processados. CVD Inicial: $${cvdRLUSD.toFixed(2)} | VWAP Inicial: $${vwapAtual.toFixed(4)}`);
+    } catch (err) {
+        console.error("[FALHA NO CARREGAMENTO HISTÓRICO]", err.message);
+    }
 }
 
 async function coletarDadosTelemetry() {
@@ -143,10 +281,15 @@ async function iniciarServidor() {
     await engine.connect();
     await engine.init();
 
+    await carregarHistoricoExecucoes();
+
     io.on('connection', async (socket) => {
         const dadosIniciais = await coletarDadosTelemetry();
         if (dadosIniciais) {
             socket.emit('xrpl_telemetry', dadosIniciais);
+        }
+        if (tradeHistory.length > 0) {
+            socket.emit('xrpl_trade_history', tradeHistory);
         }
     });
 
@@ -177,60 +320,13 @@ async function iniciarServidor() {
     }, 3000);
 
     engine.client.on("transaction", (tx) => {
-        try {
-            if (tx.validated && tx.transaction.TransactionType === "OfferCreate") {
-                const transactionData = tx.transaction;
-                
-                let side = null;
-                let amountXRP = 0;
-                let amountRLUSD = 0;
-
-                if (typeof transactionData.TakerGets === 'string' && typeof transactionData.TakerPays === 'object') {
-                    if (transactionData.TakerPays.currency === config.CURRENCY_RLUSD) {
-                        side = 'SELL';
-                        amountXRP = parseFloat(xrpl.dropsToXrp(transactionData.TakerGets));
-                        amountRLUSD = parseFloat(transactionData.TakerPays.value);
-                    }
-                } else if (typeof transactionData.TakerPays === 'string' && typeof transactionData.TakerGets === 'object') {
-                    if (transactionData.TakerGets.currency === config.CURRENCY_RLUSD) {
-                        side = 'BUY';
-                        amountXRP = parseFloat(xrpl.dropsToXrp(transactionData.TakerPays));
-                        amountRLUSD = parseFloat(transactionData.TakerGets.value);
-                    }
-                }
-
-                if (side && amountXRP > 0) {
-                    const price = amountRLUSD / amountXRP;
-                    const isWhale = amountRLUSD >= WHALE_THRESHOLD_RLUSD;
-
-                    if (side === 'BUY') {
-                        cvdRLUSD += amountRLUSD;
-                    } else {
-                        cvdRLUSD -= amountRLUSD;
-                    }
-
-                    totalVolumeRLUSDAcumulado += amountRLUSD;
-                    totalVolumeXRPAcumulado += amountXRP;
-                    if (totalVolumeXRPAcumulado > 0) {
-                        vwapAtual = totalVolumeRLUSDAcumulado / totalVolumeXRPAcumulado;
-                    }
-
-                    const tradePayload = {
-                        timestamp: new Date().toLocaleTimeString('pt-BR'),
-                        side,
-                        price,
-                        amountXRP,
-                        amountRLUSD,
-                        isWhale,
-                        cvdRLUSD,
-                        vwap: vwapAtual,
-                        hash: tx.transaction.hash
-                    };
-                    io.emit('xrpl_trade', tradePayload);
-                }
+        const trade = processarTradeMeta(tx);
+        if (trade) {
+            tradeHistory.unshift(trade);
+            if (tradeHistory.length > 15) {
+                tradeHistory.pop();
             }
-        } catch (e) {
-            console.error("[ERRO PROCESSAMENTO TRADE]", e.message);
+            io.emit('xrpl_trade', trade);
         }
     });
 
@@ -248,3 +344,4 @@ async function iniciarServidor() {
 }
 
 iniciarServidor();
+EOF
