@@ -1,0 +1,12 @@
+# Variáveis de ambiente e segredos
+.env
+.env.*
+
+# Módulos de dependência pesados do Node.js
+node_modules/
+
+# Arquivos de log e temporários do sistema
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
