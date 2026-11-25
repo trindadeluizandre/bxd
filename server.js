@@ -505,13 +505,14 @@ function registrarFluxoLedger(tx) {
 
 function resumirFluxoLedger() {
     const now = Date.now();
-    ledgerFlowEvents = ledgerFlowEvents.filter(ev => now - ev.ts <= WINDOW_60S_MS);
+    ledgerFlowEvents = ledgerFlowEvents.filter(ev => now - ev.ts <= WINDOW_300S_MS);
+    const events60s = ledgerFlowEvents.filter(ev => now - ev.ts <= WINDOW_60S_MS);
 
     let offerCreateCount = 0;
     let offerCancelCount = 0;
     let ammTxCount = 0;
 
-    for (const ev of ledgerFlowEvents) {
+    for (const ev of events60s) {
         if (ev.type === "OFFER_CREATE") offerCreateCount++;
         else if (ev.type === "OFFER_CANCEL") offerCancelCount++;
         else if (ev.type === "AMM_TX") ammTxCount++;
@@ -758,12 +759,15 @@ function avaliarRadarExaustaoCorredor({
         cancelRatio > 35 ||
         (slippageVenda && !slippageVenda.semLiquidezSuficiente && slippageVenda.slippagePercent > 0.25)
     ];
-    const sellScore = canEvaluateTop ? sellExhaustionChecks.filter(Boolean).length : 0;
 
     const canEvaluateBottom = pivotState.seeking !== "TOP" &&
         hasMinCandleSpacing &&
         candidateDropFromTopPct <= -minLegPct &&
         bounceFromLowPct >= confirmPct;
+
+    const candleBias = candleContext?.candleBias || "NEUTRAL";
+    const sellContextBonus = candleBias === "TOP_EXHAUSTION_CONTEXT" ? 1 : 0;
+    const buyContextBonus = candleBias === "BOTTOM_EXHAUSTION_CONTEXT" ? 1 : 0;
 
     const buyExhaustionChecks = [
         canEvaluateBottom,
@@ -776,9 +780,15 @@ function avaliarRadarExaustaoCorredor({
         (c1 && c1.positionInRangePct >= 55) ||
         (h5 && h5.historyPositionPct <= 25) ||
         (c5 && c5.isBullish) ||
-        Boolean(srVol.nearSupport)
+        Boolean(srVol.nearSupport),
+        cancelRatio > 35 || (ledgerFlow && (ledgerFlow.ammTxCount || 0) > 0)
     ];
-    const buyScore = canEvaluateBottom ? buyExhaustionChecks.filter(Boolean).length : 0;
+    const sellScore = canEvaluateTop
+        ? Math.min(sellExhaustionChecks.filter(Boolean).length + sellContextBonus, 6)
+        : 0;
+    const buyScore = canEvaluateBottom
+        ? Math.min(buyExhaustionChecks.filter(Boolean).length + buyContextBonus, 6)
+        : 0;
 
     let rawCandidate = "NEUTRAL";
     let score = 0;
@@ -790,8 +800,6 @@ function avaliarRadarExaustaoCorredor({
         rawCandidate = "BUY_REVERSAL_EXHAUSTION";
         score = buyScore;
     }
-
-    const candleBias = candleContext?.candleBias || "NEUTRAL";
     const emaBiasAllows = !runtimeConfig.emaTrendFilter ||
         (rawCandidate === "SELL_REVERSAL_EXHAUSTION" && candleBias === "TOP_EXHAUSTION_CONTEXT") ||
         (rawCandidate === "BUY_REVERSAL_EXHAUSTION" && candleBias === "BOTTOM_EXHAUSTION_CONTEXT");
@@ -1298,11 +1306,7 @@ async function coletarDadosTelemetry(force = false) {
             timestampMs: now
         });
 
-        if (exhaustionRadar.signal === "SELL_REVERSAL_EXHAUSTION" && candleContext.candleBias === "TOP_EXHAUSTION_CONTEXT") {
-            exhaustionRadar.score = Math.min(exhaustionRadar.score + 1, 6);
-        } else if (exhaustionRadar.signal === "BUY_REVERSAL_EXHAUSTION" && candleContext.candleBias === "BOTTOM_EXHAUSTION_CONTEXT") {
-            exhaustionRadar.score = Math.min(exhaustionRadar.score + 1, 6);
-        }
+        // Bônus de candleBias já incorporado dentro de avaliarRadarExaustaoCorredor antes da persistência
 
         const timeSec = Math.floor(now / 1000);
         const lastTick = tickHistory[tickHistory.length - 1];
@@ -1561,6 +1565,8 @@ module.exports = {
     parseOffer,
     calcularSlippage,
     calcularOBI,
+    registrarFluxoLedger,
+    resumirFluxoLedger,
     avaliarCvdEAbsorcao,
     avaliarRadarExaustaoCorredor,
     avaliarContextoCandles,

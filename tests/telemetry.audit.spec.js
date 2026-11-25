@@ -4,6 +4,8 @@ const path = require('path');
 const {
   calcularSlippage,
   calcularOBI,
+  registrarFluxoLedger,
+  resumirFluxoLedger,
   avaliarCvdEAbsorcao,
   avaliarRadarExaustaoCorredor,
   atualizarCandlesAgregados
@@ -36,6 +38,24 @@ test.describe('1. Auditoria Lógica do Motor (Cálculos & Invariantes)', () => {
     expect(slipBuy.slippagePercent).toBeGreaterThanOrEqual(0);
   });
 
+  test('L1: resumirFluxoLedger calcula janela de 60s sem descartar retenção de 300s', () => {
+    registrarFluxoLedger({ TransactionType: 'OfferCreate' });
+    registrarFluxoLedger({ TransactionType: 'OfferCancel' });
+    registrarFluxoLedger({ TransactionType: 'AMMDeposit' });
+
+    const resumo1 = resumirFluxoLedger();
+    expect(resumo1.offerCreateCount).toBeGreaterThanOrEqual(1);
+    expect(resumo1.offerCancelCount).toBeGreaterThanOrEqual(1);
+    expect(resumo1.ammTxCount).toBeGreaterThanOrEqual(1);
+    expect(resumo1.offerCancelRatio).toBeCloseTo(50, 1);
+
+    // Segunda chamada imediata confirma que events60s não apagou os eventos ativos
+    const resumo2 = resumirFluxoLedger();
+    expect(resumo2.offerCreateCount).toBe(resumo1.offerCreateCount);
+    expect(resumo2.offerCancelCount).toBe(resumo1.offerCancelCount);
+    expect(resumo2.ammTxCount).toBe(resumo1.ammTxCount);
+  });
+
   test('Radar de Exaustão exige alternância TOPO -> FUNDO e 2 confirmações', () => {
     const baseMs = Date.UTC(2026, 10, 24, 12, 0, 0);
     const candles = atualizarCandlesAgregados(1.0000, baseMs);
@@ -47,7 +67,6 @@ test.describe('1. Auditoria Lógica do Motor (Cálculos & Invariantes)', () => {
       candleBias: 'TOP_EXHAUSTION_CONTEXT'
     };
 
-    // Âncora inicial em 1.0000 e subida de +1.5% até 1.0150
     avaliarRadarExaustaoCorredor({
       midPrice: 1.0000, microprice: 1.0001, obiTop5: { buyPercent: 60 }, obiDecay: { buyPercent: 55 },
       cvd60s: 200, priceDelta60s: 0.2, signalAbsorptionDivergence: 'NEUTRAL',
@@ -62,7 +81,6 @@ test.describe('1. Auditoria Lógica do Motor (Cálculos & Invariantes)', () => {
       candleContext: commonCtx, timestampMs: baseMs + 60_000
     });
 
-    // 1ª leitura de recuo (-0.39% do topo 1.0150 -> 1.0110) após 3 velas de 5m: ainda não confirmado (1/2)
     const r1 = avaliarRadarExaustaoCorredor({
       midPrice: 1.0110, microprice: 1.0105, obiTop5: { buyPercent: 35 }, obiDecay: { buyPercent: 40 },
       cvd60s: -300, priceDelta60s: -0.2, signalAbsorptionDivergence: 'BEARISH_ABSORPTION',
@@ -72,7 +90,6 @@ test.describe('1. Auditoria Lógica do Motor (Cálculos & Invariantes)', () => {
     expect(r1.confirmed).toBe(false);
     expect(r1.confirmations).toBe(1);
 
-    // 2ª leitura consecutiva confirma TOPO e alterna busca para BOTTOM
     const r2 = avaliarRadarExaustaoCorredor({
       midPrice: 1.0108, microprice: 1.0102, obiTop5: { buyPercent: 32 }, obiDecay: { buyPercent: 38 },
       cvd60s: -350, priceDelta60s: -0.25, signalAbsorptionDivergence: 'BEARISH_ABSORPTION',
@@ -82,6 +99,59 @@ test.describe('1. Auditoria Lógica do Motor (Cálculos & Invariantes)', () => {
     expect(r2.confirmed).toBe(true);
     expect(r2.recordedSwing?.kind).toBe('TOPO');
     expect(r2.seekingPivot).toBe('BOTTOM');
+  });
+
+  test('L2/L3: BUY_REVERSAL_EXHAUSTION atinge score 6/6 simétrico e grava score exato no FUNDO', () => {
+    const baseMs = Date.UTC(2026, 10, 24, 14, 0, 0);
+    const candles = atualizarCandlesAgregados(1.0000, baseMs);
+    const buyCtx = {
+      c1m: { ...candles.candle1m, positionInRangePct: 80, bodyChangePct: 0.35, isBearish: false, isBullish: true },
+      c5m: { ...candles.candle5m, isBearish: false, isBullish: true },
+      history: { m5: { historyPositionPct: 15 } },
+      srVol: { atr5mPct: 0.25, volatilityRegime: 'NORMAL', confirmMultiplier: 1.0, nearResistance: false, nearSupport: true },
+      candleBias: 'BOTTOM_EXHAUSTION_CONTEXT'
+    };
+
+    // Inicia perna de queda partindo de 1.0000 até 0.9850 (-1.50%)
+    avaliarRadarExaustaoCorredor({
+      midPrice: 1.0000, microprice: 0.9999, obiTop5: { buyPercent: 45 }, obiDecay: { buyPercent: 45 },
+      cvd60s: -100, priceDelta60s: -0.1, signalAbsorptionDivergence: 'NEUTRAL',
+      ledgerFlow: { offerCancelRatio: 10, ammTxCount: 0 }, slippageVenda: { semLiquidezSuficiente: false, slippagePercent: 0.1 },
+      candleContext: buyCtx, timestampMs: baseMs
+    });
+
+    avaliarRadarExaustaoCorredor({
+      midPrice: 0.9850, microprice: 0.9849, obiTop5: { buyPercent: 42 }, obiDecay: { buyPercent: 44 },
+      cvd60s: -300, priceDelta60s: -1.5, signalAbsorptionDivergence: 'NEUTRAL',
+      ledgerFlow: { offerCancelRatio: 15, ammTxCount: 0 }, slippageVenda: { semLiquidezSuficiente: false, slippagePercent: 0.1 },
+      candleContext: buyCtx, timestampMs: baseMs + 60_000
+    });
+
+    // 1ª leitura de repique (+0.41% do fundo 0.9850 -> 0.9890) após 4 velas de 5m
+    const b1 = avaliarRadarExaustaoCorredor({
+      midPrice: 0.9890, microprice: 0.9895, obiTop5: { buyPercent: 68 }, obiDecay: { buyPercent: 60 },
+      cvd60s: 320, priceDelta60s: 0.25, signalAbsorptionDivergence: 'BULLISH_ABSORPTION',
+      ledgerFlow: { offerCancelRatio: 42, ammTxCount: 2 }, slippageVenda: { semLiquidezSuficiente: false, slippagePercent: 0.1 },
+      candleContext: buyCtx, timestampMs: baseMs + 25 * 60_000
+    });
+    expect(b1.signal).toBe('BUY_REVERSAL_EXHAUSTION');
+    expect(b1.score).toBe(6);
+    expect(b1.maxScore).toBe(6);
+    expect(b1.confirmed).toBe(false);
+
+    // 2ª leitura consecutiva confirma FUNDO e grava score 6/6 sincronizado
+    const b2 = avaliarRadarExaustaoCorredor({
+      midPrice: 0.9892, microprice: 0.9898, obiTop5: { buyPercent: 70 }, obiDecay: { buyPercent: 62 },
+      cvd60s: 360, priceDelta60s: 0.30, signalAbsorptionDivergence: 'BULLISH_ABSORPTION',
+      ledgerFlow: { offerCancelRatio: 45, ammTxCount: 3 }, slippageVenda: { semLiquidezSuficiente: false, slippagePercent: 0.1 },
+      candleContext: buyCtx, timestampMs: baseMs + 25 * 60_000 + 5000
+    });
+    expect(b2.confirmed).toBe(true);
+    expect(b2.score).toBe(6);
+    expect(b2.recordedSwing?.kind).toBe('FUNDO');
+    expect(b2.recordedSwing?.score).toBe(6);
+    expect(b2.recordedSwing?.maxScore).toBe(6);
+    expect(b2.seekingPivot).toBe('TOP');
   });
 });
 
@@ -98,7 +168,6 @@ test.describe('2. Auditoria Ponta a Ponta da Interface & Console (Playwright)', 
     await page.goto('/');
     await page.waitForTimeout(400);
 
-    // Envia histórico de ticks simulado
     const nowSec = Math.floor(Date.now() / 1000) - 10;
     await request.post('/__test__/emit', {
       data: {
@@ -111,7 +180,6 @@ test.describe('2. Auditoria Ponta a Ponta da Interface & Console (Playwright)', 
       }
     });
 
-    // Envia pacote completo de telemetria e swings para validar DOM
     await request.post('/__test__/emit', {
       data: {
         event: 'xrpl_telemetry',
@@ -167,13 +235,11 @@ test.describe('2. Auditoria Ponta a Ponta da Interface & Console (Playwright)', 
       }
     });
 
-    // Verifica ausência de NaN/undefined nos cards principais
     const bestAskText = await page.locator('#bestAsk').innerText();
     const bestBidText = await page.locator('#bestBid').innerText();
     expect(bestAskText).toBe('$0.93100');
     expect(bestBidText).toBe('$0.92900');
 
-    // Verifica inversão semântica de cores no Registro 24h (TOPO = bid verde, FUNDO = ask vermelho)
     const firstRowExtremo = page.locator('#dailySwingsBody tr').nth(0).locator('td').nth(1);
     const secondRowExtremo = page.locator('#dailySwingsBody tr').nth(1).locator('td').nth(1);
     await expect(firstRowExtremo).toHaveText('TOPO');
@@ -181,18 +247,15 @@ test.describe('2. Auditoria Ponta a Ponta da Interface & Console (Playwright)', 
     await expect(secondRowExtremo).toHaveText('FUNDO');
     await expect(secondRowExtremo).toHaveClass(/ask/);
 
-    // Testa troca de timeframes e botão EXPANDIR
     await page.locator('.tf-btn[data-tf="5m"]').click();
     await expect(page.locator('#chartReadTf')).toHaveText('TF: 5m');
     await page.locator('.tf-btn[data-tf="TICK"]').click();
     await expect(page.locator('#chartReadTf')).toHaveText('TF: TICK');
 
-    // Testa atualização de parâmetros em tempo real
     await page.fill('#cfgWhaleThreshold', '7500');
     await page.click('#btnApplyRuntimeConfig');
     await expect(page.locator('#runtimeConfigStatus')).toContainText('Whale ≥ $7500');
 
-    // Recarrega a página (F5) para auditar ausência de TDZ (lastEMA9) e persistência
     await page.reload();
     await page.waitForTimeout(500);
 
