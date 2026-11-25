@@ -982,6 +982,10 @@
                 visible: activeTimeframe === 'TICK' && showEmaLine
             });
 
+            let lastEMA9 = null;
+            const periodEMA = 9;
+            const kFactor = 2 / (periodEMA + 1);
+
             const vwapSeries = tvChart.addLineSeries({
                 color: '#bc8cff',
                 lineWidth: 2,
@@ -1579,10 +1583,6 @@
                     tvChart.applyOptions({ width: tvContainer.clientWidth });
                 }
             });
-
-            let lastEMA9 = null;
-            const periodEMA = 9;
-            const kFactor = 2 / (periodEMA + 1);
 
             function calcularEMA9(novoPreco) {
                 if (lastEMA9 === null) {

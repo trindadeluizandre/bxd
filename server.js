@@ -57,7 +57,9 @@ let runtimeConfig = {
     enableTelegramAlerts: process.env.ENABLE_TELEGRAM_ALERTS === "true"
 };
 
-const SWINGS_PERSIST_DIR = path.join(__dirname, 'data');
+const SWINGS_PERSIST_DIR = process.env.TELEMETRY_DATA_DIR
+    ? path.resolve(process.env.TELEMETRY_DATA_DIR)
+    : path.join(__dirname, 'data');
 const SWINGS_PERSIST_FILE = path.join(SWINGS_PERSIST_DIR, 'daily_swings_24h.json');
 
 let currentUtcDayKey = null;
@@ -1443,13 +1445,16 @@ async function conectarComFallbackInicial() {
     throw new Error("Não foi possível conectar a nenhum servidor WSS da XRPL na inicialização.");
 }
 
+const IS_TEST_MOCK_MODE = process.env.TEST_MOCK_MODE === 'true';
+
 async function iniciarServidor() {
-    await conectarComFallbackInicial();
-    await engine.init();
+    if (!IS_TEST_MOCK_MODE) {
+        await conectarComFallbackInicial();
+        await engine.init();
+        await carregarHistoricoExecucoes();
+    }
 
-    await carregarHistoricoExecucoes();
     carregarEstadoSwingsJSON();
-
     carregarEstadoTelemetriaJSON();
 
     io.on('connection', async (socket) => {
@@ -1513,18 +1518,32 @@ async function iniciarServidor() {
         });
     });
 
-    anexarListenersCliente();
-    await assinarStreamsXRPL();
+    if (!IS_TEST_MOCK_MODE) {
+        anexarListenersCliente();
+        await assinarStreamsXRPL();
 
-    // Backup leve caso algum ledgerClosed demore além de 8s
-    setInterval(async () => {
-        const backupGapMs = Math.max(runtimeConfig.pollingIntervalMs * 2.5, 7500);
-        if (!isReconnecting && Date.now() - lastTelemetryRunMs >= backupGapMs) {
-            await executarCicloTelemetry(false);
-        }
-    }, 5000);
+        setInterval(async () => {
+            const backupGapMs = Math.max(runtimeConfig.pollingIntervalMs * 2.5, 7500);
+            if (!isReconnecting && Date.now() - lastTelemetryRunMs >= backupGapMs) {
+                await executarCicloTelemetry(false);
+            }
+        }, 5000);
+    } else {
+        app.use(express.json());
+        app.post('/__test__/emit', (req, res) => {
+            const { event, payload } = req.body || {};
+            if (!event) return res.status(400).json({ ok: false, error: 'event_required' });
+            if (event === 'xrpl_tick_history' && Array.isArray(payload)) {
+                tickHistory = payload;
+            } else if (event === 'xrpl_trade' && payload) {
+                tradeHistory.unshift(payload);
+            }
+            io.emit(event, payload);
+            return res.json({ ok: true });
+        });
+    }
 
-    const PORT = 3000;
+    const PORT = parseInt(process.env.PORT || '3000', 10);
     server.listen(PORT, () => {
         console.log(`===============================================================`);
         console.log(` SERVER TELEMETRIA ONLINE: http://localhost:${PORT}`);
@@ -1532,4 +1551,19 @@ async function iniciarServidor() {
     });
 }
 
-iniciarServidor();
+if (require.main === module) {
+    iniciarServidor();
+}
+
+module.exports = {
+    iniciarServidor,
+    calcularMidEstabilizado,
+    parseOffer,
+    calcularSlippage,
+    calcularOBI,
+    avaliarCvdEAbsorcao,
+    avaliarRadarExaustaoCorredor,
+    avaliarContextoCandles,
+    atualizarCandlesAgregados,
+    syncUtcCycle
+};
